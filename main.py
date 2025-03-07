@@ -155,12 +155,25 @@ async def interactive_mode(assistant: LegalAssistant):
             logging.info(f"Processing interactive query: {query}")
             result = await process_query(assistant, query)
             
+            # Validación de confiabilidad de respuesta
+            if result.get("validation") and result.get("validation").get("factual_accuracy", 1.0) < 0.7:
+                print("\n⚠️ AVISO: Baja confiabilidad factual (precisión: {:.1f}%).".format(
+                    result.get("validation").get("factual_accuracy", 0) * 100))
+                print("Se recomienda verificar esta información con fuentes oficiales del Código Penal.")
+            
             print("\nRespuesta:")
             print(result["response"])
             
             if result.get("articles_cited"):
                 print("\nArtículos citados:")
                 print(", ".join(result["articles_cited"]))
+                
+                # Mostrar información de validación si existe
+                if result.get("validation") and result.get("validation").get("unvalidated_citations"):
+                    unvalidated = [cite["article"] for cite in result["validation"]["unvalidated_citations"]]
+                    if unvalidated:
+                        print("\n⚠️ Artículos citados sin verificar:")
+                        print(", ".join(unvalidated))
             
             if result.get("tokens_used"):
                 print(f"\nTokens utilizados: {result['tokens_used']}")
@@ -175,6 +188,7 @@ async def main():
     parser = argparse.ArgumentParser(description="Asistente Legal con Código Penal de Argentina")
     parser.add_argument("--config", type=str, help="Ruta al archivo de configuración")
     parser.add_argument("--json_path", type=str, help="Ruta al archivo JSON con los chunks del Código Penal")
+    parser.add_argument("--json_dir", type=str, help="Ruta al directorio con múltiples archivos JSON")
     parser.add_argument("--query", type=str, help="Consulta legal (opcional)")
     parser.add_argument("--log_level", type=str, default="INFO", help="Nivel de logging (DEBUG, INFO, WARNING, ERROR)")
     parser.add_argument("--rebuild", action="store_true", help="Reconstruir embeddings y grafo de conocimiento")
@@ -193,8 +207,12 @@ async def main():
         logging.info("Initializing assistant")
         assistant = await init_assistant(args.config)
         
-        # Process file if provided
-        if args.json_path:
+        # Process file or directory if provided
+        if args.json_dir:
+            logging.info(f"Processing directory: {args.json_dir}")
+            result = await assistant.load_data_directory(args.json_dir, rebuild=args.rebuild)
+            print(f"Procesamiento de directorio completado. {len(result)} archivos procesados.")
+        elif args.json_path:
             logging.info(f"Processing file: {args.json_path}")
             result = await process_file(assistant, args.json_path, rebuild=args.rebuild)
             print(f"Procesamiento completado: {json.dumps(result, indent=2)}")
@@ -211,6 +229,12 @@ async def main():
             logging.info(f"Processing command-line query: {args.query}")
             result = await process_query(assistant, args.query)
             
+            # Validación de confiabilidad de respuesta
+            if result.get("validation") and result.get("validation").get("factual_accuracy", 1.0) < 0.7:
+                print("\n⚠️ AVISO: Baja confiabilidad factual (precisión: {:.1f}%).".format(
+                    result.get("validation").get("factual_accuracy", 0) * 100))
+                print("Se recomienda verificar esta información con fuentes oficiales del Código Penal.")
+            
             print("\nRespuesta:")
             if result.get("response"):
                 print(result["response"])
@@ -220,6 +244,13 @@ async def main():
             if result.get("articles_cited"):
                 print("\nArtículos citados:")
                 print(", ".join(result["articles_cited"]))
+                
+                # Mostrar información de validación si existe
+                if result.get("validation") and result.get("validation").get("unvalidated_citations"):
+                    unvalidated = [cite["article"] for cite in result["validation"]["unvalidated_citations"]]
+                    if unvalidated:
+                        print("\n⚠️ Artículos citados sin verificar:")
+                        print(", ".join(unvalidated))
         elif not args.visualize:  # Only run interactive mode if not just visualizing
             logging.info("No query provided, running interactive mode")
             await interactive_mode(assistant)

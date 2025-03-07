@@ -8,7 +8,7 @@
     "synonyms_path": "./legal_synonyms.json",
     "collection_name": "codigo_penal_chunks",
     "json_path": "./codigo_penal_argentino_metadata_chunks.json",
-    "batch_size": 100,
+    "batch_size": 8,
     "retrieval_top_k": 10,
     "use_hybrid_search": true,
     "use_query_expansion": true,

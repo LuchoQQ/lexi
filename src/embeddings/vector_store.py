@@ -50,9 +50,11 @@ class VectorStore:
     def get_or_create_collection(self):
         """Get existing collection or create a new one."""
         try:
-            # Check if collection exists
-            collections = self.client.list_collections()
-            collection_exists = self.collection_name in collections
+            # Check if collection exists using the new API convention
+            collection_names = self.client.list_collections()
+            
+            # In v0.6.0+, collection_names is just a list of strings
+            collection_exists = self.collection_name in collection_names
             
             if collection_exists:
                 logging.info(f"Using existing collection: {self.collection_name}")
@@ -182,34 +184,24 @@ class VectorStore:
             except Exception as e:
                 raise VectorStoreError(f"Failed to add documents: {e}")
     
-    async def query_async(self, 
-                   query_texts: List[str], 
-                   n_results: int = 10, 
-                   where: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Query the vector store asynchronously.
-        
-        Args:
-            query_texts: List of query texts
-            n_results: Number of results to return
-            where: Metadata filter (optional)
-            
-        Returns:
-            Query results
-        """
-        try:
-            # Run query in a thread pool to avoid blocking
-            loop = asyncio.get_event_loop()
-            results = await loop.run_in_executor(
-                None,
-                lambda: self.collection.query(
-                    query_texts=query_texts,
-                    n_results=n_results,
-                    where=where
+        async def query_async(self, 
+                    query_texts: List[str], 
+                    n_results: int = 10, 
+                    where: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+            """Query the vector store asynchronously."""
+            try:
+                loop = asyncio.get_event_loop()
+                results = await loop.run_in_executor(
+                    None,
+                    lambda: self.collection.query(
+                        query_texts=query_texts,
+                        n_results=n_results,
+                        where=where
+                    )
                 )
-            )
-            return results
-        except Exception as e:
-            raise VectorStoreError(f"Failed to query vector store: {e}")
+                return results
+            except Exception as e:
+                raise VectorStoreError(f"Failed to query vector store: {e}")
     
     def query(self, 
              query_texts: List[str], 

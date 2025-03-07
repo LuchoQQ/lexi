@@ -48,155 +48,28 @@ class LegalRetriever:
             logging.error(traceback.format_exc())
             raise RetrievalError(f"Failed to load reranking model: {e}")
     
-    async def retrieve(self, 
-                      query: str, 
-                      top_k: int = 15, 
-                      use_hybrid: bool = True,
-                      use_expansion: bool = True) -> List[Dict[str, Any]]:
-        """Retrieve relevant chunks for a query using hybrid search.
-        
-        Args:
-            query: User query
-            top_k: Number of results to return
-            use_hybrid: Whether to use hybrid retrieval (vector + graph)
-            use_expansion: Whether to use query expansion
-            
-        Returns:
-            List of retrieved chunks with scores
-        """
-        try:
-            logging.info(f"Starting retrieval for query: '{query}'")
-            logging.info(f"Parameters: top_k={top_k}, use_hybrid={use_hybrid}, use_expansion={use_expansion}")
-            
-            # 1. Extract key entities from query
-            articles = extract_articles(query)
-            concepts = extract_legal_concepts(query)
-            penalties = extract_penalties(query)
-            
-            logging.info(f"Extracted entities - Articles: {articles}, Concepts: {concepts}, Penalties: {penalties}")
-            
-            # 2. Expand query if enabled
-            expanded_query = query
-            if use_expansion:
-                expanded_query = await self._expand_query(query, articles, concepts)
-                logging.info(f"Expanded query: '{expanded_query}'")
-            
-            # 3. Perform vector search
-            logging.info("Performing vector search")
-            vector_results = await self._vector_search(expanded_query, top_k)
-            logging.info(f"Vector search returned {len(vector_results)} results")
-            
-            # 4. Add graph-based results if enabled
-            if use_hybrid:
-                logging.info("Performing graph search")
-                graph_results = await self._graph_search(articles, concepts, penalties)
-                logging.info(f"Graph search returned {len(graph_results)} results")
-                
-                # Combine results
-                all_results = self._combine_results(vector_results, graph_results)
-                logging.info(f"Combined {len(vector_results)} vector results with {len(graph_results)} graph results for a total of {len(all_results)} results")
-            else:
-                all_results = vector_results
-            
-            # 5. Rerank results
-            logging.info("Reranking results")
-            reranked_results = await self._rerank_results(query, all_results, top_k)
-            logging.info(f"Reranked to {len(reranked_results)} results")
-            
-            # 6. Ensure diversity in the results
-            logging.info("Ensuring diversity in results")
-            diverse_results = self._ensure_diversity(reranked_results)
-            logging.info(f"Final diverse result set contains {len(diverse_results)} chunks")
-            
-            # Log the first result to help diagnose issues
-            if diverse_results:
-                logging.info(f"Top result - ID: {diverse_results[0].get('id')}, Score: {diverse_results[0].get('rerank_score')}")
-                logging.debug(f"Top result content preview: {diverse_results[0].get('content', '')[:100]}...")
-            else:
-                logging.warning("No results found after all retrieval steps")
-            
-            return diverse_results
-            
-        except Exception as e:
-            error_msg = f"Error retrieving information: {e}"
-            logging.error(error_msg)
-            logging.error(traceback.format_exc())
-            raise RetrievalError(f"Failed to retrieve information: {e}")
-    
-    async def _expand_query(self, 
-                           query: str, 
-                           articles: List[str], 
-                           concepts: List[str]) -> str:
-        """Expand the query with synonyms and related terms.
-        
-        Args:
-            query: Original query
-            articles: Articles mentioned in the query
-            concepts: Concepts mentioned in the query
-            
-        Returns:
-            Expanded query
-        """
-        logging.info(f"Expanding query with {len(articles)} articles and {len(concepts)} concepts")
-        expansion_terms = []
-        
-        # 1. Add synonyms for legal concepts
-        for concept in concepts:
-            if concept in self.legal_synonyms:
-                expansion_terms.extend(self.legal_synonyms[concept])
-                logging.debug(f"Added synonyms for concept '{concept}': {self.legal_synonyms[concept]}")
-        
-        # 2. Add related concepts from knowledge graph
-        for concept in concepts:
-            entity_type = self.knowledge_graph._infer_entity_type(concept)
-            normalized = self.knowledge_graph._normalize_entity(concept, entity_type)
-            
-            if self.knowledge_graph.graph.has_node(normalized):
-                # Get directly connected concepts
-                for neighbor in self.knowledge_graph.graph.successors(normalized):
-                    if self.knowledge_graph.graph.nodes[neighbor].get("type") == "concept":
-                        expansion_terms.append(neighbor)
-                        logging.debug(f"Added related concept '{neighbor}' from knowledge graph")
-        
-        # 3. Add normalized article references
-        for article in articles:
-            entity_type = self.knowledge_graph._infer_entity_type(article)
-            normalized = self.knowledge_graph._normalize_entity(article, entity_type)
-            
-            # Convert normalized form back to human-readable
-            if normalized.startswith("articulo_"):
-                readable = "artículo " + normalized[9:]
-                expansion_terms.append(readable)
-                logging.debug(f"Added normalized article reference: '{readable}'")
-        
-        # 4. Construct expanded query
-        if expansion_terms:
-            # Remove duplicates and limit number of expansion terms
-            unique_terms = list(set(expansion_terms))[:5]
-            expanded_query = f"{query} {' '.join(unique_terms)}"
-            logging.info(f"Query expanded with {len(unique_terms)} unique terms")
-            return expanded_query
-        else:
-            logging.info("No expansion terms found, using original query")
-            return query
-    
-    async def _vector_search(self, query: str, top_k: int) -> List[Dict[str, Any]]:
-        """Perform vector search in the database.
-        
-        Args:
-            query: Query text
-            top_k: Number of results to return
-            
-        Returns:
-            List of retrieved chunks
-        """
+    async def _vector_search(self, query: str, top_k: int, where: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        """Perform vector search in the database."""
         logging.info(f"Executing vector search for query: '{query}' with top_k={top_k}")
         
         try:
-            # Query the vector store
-            results = await self.vector_store.query_async(
+            # Fix empty where filter - ChromaDB requires specific format
+            where_filter = None
+            if where and len(where) > 0:
+                logging.info(f"Applying metadata filter: {where}")
+                if len(where) == 1:
+                    # Si solo hay un filtro, usar directamente sin $and
+                    key, value = next(iter(where.items()))
+                    where_filter = {key: {"$eq": value}}
+                else:
+                    # Para múltiples filtros usar $and
+                    where_filter = {"$and": [{k: {"$eq": v}} for k, v in where.items()]}
+            
+            # Query the vector store (usando query en lugar de query_async)
+            results = self.vector_store.query(
                 query_texts=[query],
-                n_results=top_k
+                n_results=top_k,
+                where=where_filter
             )
             
             logging.info(f"Vector store returned {len(results['ids'][0])} results")
@@ -233,6 +106,7 @@ class LegalRetriever:
             # Return empty list instead of raising exception to allow fallback to other methods
             logging.warning("Returning empty result list after vector search error")
             return []
+    
     
     async def _graph_search(self, 
                         articles: List[str], 
@@ -388,7 +262,167 @@ class LegalRetriever:
         result_chunks = graph_chunks[:max_results]
         logging.info(f"Returning {len(result_chunks)} graph search results (limited from {len(graph_chunks)})")
         return result_chunks
+    async def retrieve(self, 
+                  query: str, 
+                  jurisdiction: Optional[str] = None,
+                  legal_domain: Optional[str] = None,
+                  top_k: int = 15, 
+                  use_hybrid: bool = True,
+                  use_expansion: bool = True) -> List[Dict[str, Any]]:
+        """Retrieve relevant chunks for a query using hybrid search."""
+        
+        try:
+            logging.info(f"Starting retrieval for query: '{query}'")
+            logging.info(f"Parameters: top_k={top_k}, use_hybrid={use_hybrid}, use_expansion={use_expansion}")
+            
+            # Verificar si es una búsqueda específica de artículo
+            import re
+            article_pattern = r'\barticulo\s+(\d+)\b|\bart\.?\s+(\d+)\b'
+            article_match = re.search(article_pattern, query.lower())
+            
+            # Si es una búsqueda directa de artículo, primero intentar por metadatos
+            if article_match:
+                article_num = article_match.group(1) or article_match.group(2)
+                logging.info(f"Detectada búsqueda de artículo específico: {article_num}")
+                
+                # Crear filtro para búsqueda exacta por metadatos
+                where_filter = {"article": article_num}
+                
+                # Realizar búsqueda vectorial con filtro exacto
+                exact_results = await self._vector_search(query, top_k, where=where_filter)
+                
+                if exact_results and len(exact_results) > 0:
+                    logging.info(f"Encontrados {len(exact_results)} resultados exactos para el artículo {article_num}")
+                    # Añadir método de recuperación especial
+                    for result in exact_results:
+                        result["retrieval_method"] = "exact_article_match"
+                    return exact_results
+                else:
+                    logging.info(f"No se encontraron resultados exactos para el artículo {article_num}, continuando con búsqueda normal")
+            
+            
+            logging.info(f"Starting retrieval for query: '{query}'")
+            logging.info(f"Parameters: top_k={top_k}, use_hybrid={use_hybrid}, use_expansion={use_expansion}")
+            
+            # 1. Extract key entities from query
+            articles = extract_articles(query)
+            concepts = extract_legal_concepts(query)
+            penalties = extract_penalties(query)
+            
+            logging.info(f"Extracted entities - Articles: {articles}, Concepts: {concepts}, Penalties: {penalties}")
+            
+            # 2. Expand query if enabled
+            expanded_query = query
+            if use_expansion:
+                expanded_query = await self._expand_query(query, articles, concepts)
+                logging.info(f"Expanded query: '{expanded_query}'")
+            
+            # Crear filtro de metadata para la consulta vectorial
+            where_filter = {}
+            if jurisdiction:
+                where_filter["jurisdiction"] = jurisdiction
+            if legal_domain:
+                where_filter["legal_domain"] = legal_domain
+            
+            # 3. Perform vector search
+            logging.info("Performing vector search")
+            vector_results = await self._vector_search(expanded_query, top_k, where=where_filter)
+            logging.info(f"Vector search returned {len(vector_results)} results")
+            
+            # 4. Add graph-based results if enabled
+            if use_hybrid:
+                logging.info("Performing graph search")
+                graph_results = await self._graph_search(articles, concepts, penalties)
+                logging.info(f"Graph search returned {len(graph_results)} results")
+                
+                # Combine results
+                all_results = self._combine_results(vector_results, graph_results)
+                logging.info(f"Combined {len(vector_results)} vector results with {len(graph_results)} graph results for a total of {len(all_results)} results")
+            else:
+                all_results = vector_results
+            
+            # 5. Rerank results
+            logging.info("Reranking results")
+            reranked_results = await self._rerank_results(query, all_results, top_k)
+            logging.info(f"Reranked to {len(reranked_results)} results")
+            
+            # 6. Ensure diversity in the results
+            logging.info("Ensuring diversity in results")
+            diverse_results = self._ensure_diversity(reranked_results)
+            logging.info(f"Final diverse result set contains {len(diverse_results)} chunks")
+            
+            # Log the first result to help diagnose issues
+            if diverse_results:
+                logging.info(f"Top result - ID: {diverse_results[0].get('id')}, Score: {diverse_results[0].get('rerank_score')}")
+                logging.debug(f"Top result content preview: {diverse_results[0].get('content', '')[:100]}...")
+            else:
+                logging.warning("No results found after all retrieval steps")
+            
+            return diverse_results
+            
+        except Exception as e:
+            error_msg = f"Error retrieving information: {e}"
+            logging.error(error_msg)
+            logging.error(traceback.format_exc())
+            raise RetrievalError(f"Failed to retrieve information: {e}")
     
+    async def _expand_query(self, 
+                           query: str, 
+                           articles: List[str], 
+                           concepts: List[str]) -> str:
+        """Expand the query with synonyms and related terms.
+        
+        Args:
+            query: Original query
+            articles: Articles mentioned in the query
+            concepts: Concepts mentioned in the query
+            
+        Returns:
+            Expanded query
+        """
+        logging.info(f"Expanding query with {len(articles)} articles and {len(concepts)} concepts")
+        expansion_terms = []
+        
+        # 1. Add synonyms for legal concepts
+        for concept in concepts:
+            if concept in self.legal_synonyms:
+                expansion_terms.extend(self.legal_synonyms[concept])
+                logging.debug(f"Added synonyms for concept '{concept}': {self.legal_synonyms[concept]}")
+        
+        # 2. Add related concepts from knowledge graph
+        for concept in concepts:
+            entity_type = self.knowledge_graph._infer_entity_type(concept)
+            normalized = self.knowledge_graph._normalize_entity(concept, entity_type)
+            
+            if self.knowledge_graph.graph.has_node(normalized):
+                # Get directly connected concepts
+                for neighbor in self.knowledge_graph.graph.successors(normalized):
+                    if self.knowledge_graph.graph.nodes[neighbor].get("type") == "concept":
+                        expansion_terms.append(neighbor)
+                        logging.debug(f"Added related concept '{neighbor}' from knowledge graph")
+        
+        # 3. Add normalized article references
+        for article in articles:
+            entity_type = self.knowledge_graph._infer_entity_type(article)
+            normalized = self.knowledge_graph._normalize_entity(article, entity_type)
+            
+            # Convert normalized form back to human-readable
+            if normalized.startswith("articulo_"):
+                readable = "artículo " + normalized[9:]
+                expansion_terms.append(readable)
+                logging.debug(f"Added normalized article reference: '{readable}'")
+        
+        # 4. Construct expanded query
+        if expansion_terms:
+            # Remove duplicates and limit number of expansion terms
+            unique_terms = list(set(expansion_terms))[:5]
+            expanded_query = f"{query} {' '.join(unique_terms)}"
+            logging.info(f"Query expanded with {len(unique_terms)} unique terms")
+            return expanded_query
+        else:
+            logging.info("No expansion terms found, using original query")
+            return query
+        
     def _combine_results(self, 
                         vector_results: List[Dict[str, Any]], 
                         graph_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -576,3 +610,79 @@ class LegalRetriever:
         
         logging.info(f"Selected {len(diverse)} diverse results")
         return diverse
+async def retrieve(self, 
+                  query: str, 
+                  jurisdiction: Optional[str] = None,
+                  legal_domain: Optional[str] = None,
+                  top_k: int = 15, 
+                  use_hybrid: bool = True,
+                  use_expansion: bool = True) -> List[Dict[str, Any]]:
+    """Retrieve with domain filtering."""
+    try:
+        logging.info(f"Starting retrieval for query: '{query}'")
+        logging.info(f"Parameters: top_k={top_k}, use_hybrid={use_hybrid}, use_expansion={use_expansion}")
+        
+        # 1. Extract key entities from query
+        articles = extract_articles(query)
+        concepts = extract_legal_concepts(query)
+        penalties = extract_penalties(query)
+        
+        logging.info(f"Extracted entities - Articles: {articles}, Concepts: {concepts}, Penalties: {penalties}")
+        
+        # 2. Expand query if enabled
+        expanded_query = query
+        if use_expansion:
+            expanded_query = await self._expand_query(query, articles, concepts)
+            logging.info(f"Expanded query: '{expanded_query}'")
+        
+        # Crear filtro de metadata para la consulta vectorial
+        where_filter = {}
+        if jurisdiction:
+            where_filter["jurisdiction"] = jurisdiction
+        if legal_domain:
+            where_filter["legal_domain"] = legal_domain
+        
+        # 3. Perform vector search
+        logging.info("Performing vector search")
+        vector_results = await self._vector_search(expanded_query, top_k, where=where_filter)
+        logging.info(f"Vector search returned {len(vector_results)} results")
+        
+        # 4. Add graph-based results if enabled
+        if use_hybrid:
+            logging.info("Performing graph search")
+            graph_results = await self._graph_search(articles, concepts, penalties)
+            logging.info(f"Graph search returned {len(graph_results)} results")
+            
+            # Combine results
+            all_results = self._combine_results(vector_results, graph_results)
+            logging.info(f"Combined {len(vector_results)} vector results with {len(graph_results)} graph results for a total of {len(all_results)} results")
+        else:
+            all_results = vector_results
+        
+        # 5. Rerank results
+        logging.info("Reranking results")
+        reranked_results = await self._rerank_results(query, all_results, top_k)
+        logging.info(f"Reranked to {len(reranked_results)} results")
+        
+        # 6. Ensure diversity in the results
+        logging.info("Ensuring diversity in results")
+        diverse_results = self._ensure_diversity(reranked_results)
+        logging.info(f"Final diverse result set contains {len(diverse_results)} chunks")
+        
+        # Log the first result to help diagnose issues
+        if diverse_results:
+            logging.info(f"Top result - ID: {diverse_results[0].get('id')}, Score: {diverse_results[0].get('rerank_score')}")
+            logging.debug(f"Top result content preview: {diverse_results[0].get('content', '')[:100]}...")
+        else:
+            logging.warning("No results found after all retrieval steps")
+        
+        return diverse_results
+        
+    except Exception as e:
+        error_msg = f"Error retrieving information: {e}"
+        logging.error(error_msg)
+        logging.error(traceback.format_exc())
+        raise RetrievalError(f"Failed to retrieve information: {e}")
+    
+    
+    

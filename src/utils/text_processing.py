@@ -1,6 +1,5 @@
 # utils/text_processing.py
 
-
 """Text processing utilities for legal text analysis."""
 
 import re
@@ -16,16 +15,35 @@ def extract_articles(text: str) -> List[str]:
         List of normalized article references
     """
     article_patterns = [
-        r"[Aa]rt[íi]culo\s+(\d+(\s*[a-z])?)",
-        r"[Aa]rt\.\s*(\d+(\s*[a-z])?)"
+        r"[Aa]rt[íi]culo\s+(\d+)\b",  # Solo acepta números sin letras después
+        r"[Aa]rt\.\s*(\d+)\b",        # Solo acepta números sin letras después
+        r"\bart\.?\s*(\d+)\b",         # Solo acepta números sin letras después
+        r"\bartículo\s*(\d+)\b",       # Solo acepta números sin letras después
+        r"\b[Aa]rt\b\s*(\d+)\b"        # Solo acepta números sin letras después
     ]
     
     found_articles = []
     for pattern in article_patterns:
         matches = re.findall(pattern, text)
         for match in matches:
-            article_num = match[0].strip()
-            found_articles.append(normalize_article(article_num))
+            # Para asegurarnos de que no haya letras extrañas
+            if isinstance(match, str):  # si match es un string
+                article_num = match.strip()
+            else:  # si match es una tupla (del grupo de captura)
+                article_num = match[0].strip() if isinstance(match, tuple) else match
+                
+            # Verificar que solo contiene dígitos
+            if article_num.isdigit():
+                found_articles.append(normalize_article(article_num))
+    
+    # Si no se encontraron artículos pero hay números que podrían ser artículos
+    if not found_articles:
+        # Buscar números solos que podrían ser artículos (si la consulta contiene "artículo" o "art")
+        if re.search(r'\b(artículo|articulo|art\.?)\b', text, re.IGNORECASE):
+            number_pattern = r'\b(\d+)\b'
+            number_matches = re.findall(number_pattern, text)
+            for num in number_matches:
+                found_articles.append(normalize_article(num))
     
     return list(set(found_articles))
 

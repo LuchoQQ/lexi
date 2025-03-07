@@ -36,11 +36,15 @@ class EmbeddingModel:
             
             # Limit number of threads for CPU mode
             if self.device == "cpu":
-                torch.set_num_threads(6)
-                
+                torch.set_num_threads(2)  # Cambia a un número bajo
+                # También puedes establecer las variables de entorno
+                os.environ["OMP_NUM_THREADS"] = "2"
+                os.environ["MKL_NUM_THREADS"] = "2"
+                self.model = SentenceTransformer(model_name, device=self.device)
+                logging.info(f"Loaded embedding model {model_name} on {self.device} with {torch.get_num_threads()} threads")
         except Exception as e:
             raise EmbeddingError(f"Failed to load embedding model {model_name}: {e}")
-    
+            
     def _cache_key(self, text: str) -> str:
         """Generate a cache key for a text.
         

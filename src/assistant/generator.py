@@ -1,5 +1,7 @@
 # src/assistant/generator.py
 """Asynchronous response generator with enhanced error handling."""
+from src.cache.query_cache import QueryCache  # Asegurarse de crear este archivo primero
+from typing import List, Dict, Any, Optional, Set, Tuple
 
 import os
 import json
@@ -124,15 +126,17 @@ class ResponseGenerator:
         
         Instrucciones:
         1. Cita TEXTUALMENTE las partes relevantes de los artículos y secciones.
-        2. Razona paso a paso, estableciendo conexiones entre los conceptos legales según la estructura de conocimiento.
-        3. Identifica claramente las relaciones jerárquicas entre artículos cuando existan.
-        4. Utiliza las definiciones oficiales proporcionadas en el grafo de conocimiento.
-        5. Explica cómo se relacionan diferentes conceptos legales entre sí según la estructura detectada.
-        6. Estructura tu respuesta de manera clara y comprensible.
-        7. Si la consulta involucra más de un artículo o concepto relacionado, explica las conexiones entre ellos.
-        8. No inventes información ni cites artículos que no estén en el contexto o en la estructura de conocimiento.
+        2. Si el artículo solicitado no está en el contexto o no tienes suficiente información, indícalo claramente: "No dispongo de información suficiente sobre el artículo X."
+        3. Nunca inventes el contenido de artículos o disposiciones legales. Es mejor admitir que no tienes suficiente información.
+        4. Si solo tienes información sobre relaciones entre artículos pero no el contenido específico, acláralo.
+        5. Razona paso a paso, estableciendo conexiones entre los conceptos legales según la estructura de conocimiento.
+        6. Identifica claramente las relaciones jerárquicas entre artículos cuando existan Y SOLO si tienes evidencia de estas relaciones.
+        7. Utiliza únicamente las definiciones oficiales proporcionadas en el grafo de conocimiento.
+        8. Estructura tu respuesta de manera clara y comprensible.
+        9. Verifica si las afirmaciones que haces están respaldadas por el contexto proporcionado. Si no lo están, indícalo claramente.
+        10. Cuidado con los artículos "espurios" o mal formateados en el grafo de conocimiento. Si encuentras artículos como "articulo_14 d" que parecen extraños, analiza si podría ser un error de extracción.
         
-        Finaliza siempre con un resumen conciso de los puntos clave y con las recomendaciones principales.
+        Finaliza siempre con un resumen conciso de los puntos clave y con las recomendaciones principales o, si corresponde, con una aclaración sobre la falta de información suficiente.
         """
         
         logging.debug(f"Created prompt with context size: {len(context)} and graph knowledge size: {len(graph_knowledge)}")
@@ -278,6 +282,13 @@ class LegalAssistant:
         self.knowledge_graph = None
         self.retriever = None
         self.generator = None
+        
+            # Add query cache
+        from src.cache.query_cache import QueryCache
+        self.query_cache = QueryCache(
+            max_size=self.config.get("cache_max_size", 1000),
+            ttl=self.config.get("cache_ttl", 3600)
+        )
         
         # Initialize components
         self._initialize_components()
@@ -429,6 +440,47 @@ class LegalAssistant:
             logging.error(error_msg)
             logging.error(traceback.format_exc())
             raise
+    async def load_data_directory(self, directory_path: str, rebuild: bool = False):
+        """Carga todos los archivos JSON de un directorio.
+        
+        Args:
+            directory_path: Ruta al directorio que contiene archivos JSON
+            rebuild: Si se debe reconstruir embeddings y grafo
+            
+        Returns:
+            Resultados del procesamiento de cada archivo
+        """
+        import os
+        
+        # Verificar que el directorio existe
+        if not os.path.exists(directory_path):
+            logging.error(f"El directorio {directory_path} no existe")
+            raise FileNotFoundError(f"El directorio {directory_path} no existe")
+        
+        # Listar todos los archivos JSON en el directorio
+        file_paths = [os.path.join(directory_path, f) for f in os.listdir(directory_path) 
+                    if f.endswith('.json')]
+        
+        logging.info(f"Encontrados {len(file_paths)} archivos JSON en {directory_path}")
+        
+        # Procesar cada archivo
+        results = []
+        for file_path in file_paths:
+            logging.info(f"Procesando archivo: {file_path}")
+            try:
+                result = await self.load_data(file_path, rebuild=rebuild)
+                results.append({"file": file_path, "status": "success", "result": result})
+            except Exception as e:
+                logging.error(f"Error procesando {file_path}: {e}", exc_info=True)
+                results.append({"file": file_path, "status": "error", "error": str(e)})
+        
+        return results
+    
+    
+    
+    
+    
+    
     
     def _check_vector_store(self) -> bool:
         """Check if vector store has data.
@@ -459,17 +511,97 @@ class LegalAssistant:
             logging.warning(f"Error checking knowledge graph: {e}")
             return False
             
-    async def process_query(self, query: str) -> Dict[str, Any]:
+    async def validate_answer(self, 
+                         query: str, 
+                         response: str, 
+                         context: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Valida la precisión factual de la respuesta generada.
+        
+        Args:
+            query: Consulta original
+            response: Respuesta generada
+            context: Chunks utilizados como contexto
+            
+        Returns:
+            Resultados de la validación
+        """
+        logging.info(f"Validando precisión de respuesta para consulta: '{query}'")
+        
+        # Extraer referencias a artículos de la respuesta
+        import re
+        citation_pattern = r"([^.]*?[Aa]rt[íi]culo\s+(\d+(\s*[a-z])?)[^.]*\.)"
+        citations = re.findall(citation_pattern, response)
+        
+        validation_results = {
+            "validated_citations": [],
+            "unvalidated_citations": [],
+            "factual_accuracy": 1.0
+        }
+        
+        # Para cada citación, verificar si está respaldada por el contexto
+        for cite_text, article_num, _ in citations:
+            article_normalized = f"articulo_{article_num.strip().lower()}"
+            
+            # Verificar si la citación está respaldada por el contexto
+            supported = False
+            supporting_context = None
+            
+            for chunk in context:
+                chunk_content = chunk.get("content", "").lower()
+                chunk_metadata = chunk.get("metadata", {})
+                
+                # Verificar en el contenido o en los metadatos
+                if article_normalized in chunk_content or (
+                    "article" in chunk_metadata and 
+                    str(chunk_metadata["article"]).strip().lower() == article_num.strip().lower()
+                ):
+                    supported = True
+                    supporting_context = chunk
+                    break
+            
+            if supported:
+                validation_results["validated_citations"].append({
+                    "citation": cite_text.strip(),
+                    "article": article_num.strip(),
+                    "supporting_context": supporting_context.get("id", "unknown")
+                })
+            else:
+                validation_results["unvalidated_citations"].append({
+                    "citation": cite_text.strip(),
+                    "article": article_num.strip()
+                })
+        
+        # Calcular puntuación de precisión factual
+        total_citations = len(citations)
+        if total_citations > 0:
+            validation_results["factual_accuracy"] = len(validation_results["validated_citations"]) / total_citations
+        
+        # Registrar resultados
+        logging.info(f"Validación completada - Precisión: {validation_results['factual_accuracy']:.2f}")
+        logging.info(f"Citas validadas: {len(validation_results['validated_citations'])}, No validadas: {len(validation_results['unvalidated_citations'])}")
+        
+        return validation_results            
+
+    async def process_query(self, query: str, use_cache: bool = True) -> Dict[str, Any]:
         """Process a user query.
         
         Args:
             query: User query
+            use_cache: Whether to use query cache
             
         Returns:
             Response with metadata
         """
         try:
             logging.info(f"Processing query: '{query}'")
+            
+            # Check cache first if enabled
+            if use_cache:
+                cached_response = self.query_cache.get(query, {})
+                if cached_response:
+                    logging.info(f"Retrieved response from cache for query: '{query}'")
+                    cached_response["from_cache"] = True
+                    return cached_response
             
             # Check if data is loaded
             if not self._check_vector_store() or not self._check_knowledge_graph():
@@ -529,7 +661,16 @@ class LegalAssistant:
                 temperature=self.config.get("temperature", 0.2)
             )
             
-            # 6. Add metadata
+            # 6. Validar precisión factual
+            validation_results = await self.validate_answer(query, response["response"], chunks)
+            response["validation"] = validation_results
+            
+            # Si hay citas no validadas, añadir advertencia
+            if validation_results["unvalidated_citations"] and validation_results["factual_accuracy"] < 0.8:
+                disclaimer = "\n\nADVERTENCIA: Esta respuesta contiene referencias a artículos que podrían no estar respaldados por la información disponible. Por favor, verifique con fuentes oficiales."
+                response["response"] += disclaimer
+            
+            # 7. Add metadata
             response["chunks_used"] = [{"id": chunk["id"], "score": chunk.get("rerank_score", 0)} for chunk in chunks]
             response["graph_insights"] = {
                 "entities": len(graph_insights.get("key_entities", [])),
@@ -545,6 +686,9 @@ class LegalAssistant:
                 logging.warning("Generated response is empty")
                 response["response"] = "Lo siento, no se pudo generar una respuesta específica para tu consulta. Por favor, intenta reformular tu pregunta o proporciona más detalles."
             
+            if use_cache and response.get("response"):
+                self.query_cache.set(query, {}, response)
+            
             return response
             
         except Exception as e:
@@ -557,3 +701,5 @@ class LegalAssistant:
                 "articles_cited": [],
                 "chunks_used": []
             }
+            
+        

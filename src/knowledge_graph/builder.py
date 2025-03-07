@@ -90,7 +90,7 @@ class KnowledgeGraph:
         except Exception as e:
             raise GraphError(f"Failed to load knowledge graph: {e}")
     
-    async def build_from_chunks_async(self, chunks: List[Dict[str, Any]], batch_size: int = 50):
+    async def build_from_chunks_async(self, chunks: List[Dict[str, Any]], batch_size: int = 50, max_workers: int = 4):
         """Build the knowledge graph from chunks asynchronously.
         
         Args:
@@ -100,16 +100,13 @@ class KnowledgeGraph:
         logging.info(f"Building knowledge graph from {len(chunks)} chunks")
         
         # Process chunks in batches
-        tasks = []
         for i in range(0, len(chunks), batch_size):
             end_idx = min(i + batch_size, len(chunks))
             batch = chunks[i:end_idx]
-            task = asyncio.create_task(self._process_chunk_batch(batch))
-            tasks.append(task)
             
-        # Wait for all tasks to complete
-        await asyncio.gather(*tasks)
-        
+            # Process batch synchronously to avoid concurrency issues
+            await self._process_chunk_batch(batch)
+                
         # Build relationships between entities
         await self._build_entity_relationships()
         
@@ -486,3 +483,70 @@ class KnowledgeGraph:
                     })
         
         return contradictions
+    
+    def partition_graph(self, partition_criteria: str = "article_prefix"):
+        """Particiona el grafo según criterios como jurisdicción o prefijo de artículo.
+        
+        Args:
+            partition_criteria: Criterio de particionamiento ('article_prefix', 'type', etc.)
+            
+        Returns:
+            Diccionario de subgrafos particionados
+        """
+        logging.info(f"Particionando grafo con criterio: {partition_criteria}")
+        subgraphs = {}
+        
+        for node in self.graph.nodes():
+            # Extraer criterio de partición del nodo
+            node_partition = self._extract_partition_key(node, partition_criteria)
+            
+            if node_partition not in subgraphs:
+                subgraphs[node_partition] = nx.DiGraph()
+            
+            # Copiar nodo y sus atributos
+            subgraphs[node_partition].add_node(node, **self.graph.nodes[node])
+        
+        # Copiar las aristas relevantes
+        for partition, subgraph in subgraphs.items():
+            for node in subgraph.nodes():
+                for succ in self.graph.successors(node):
+                    if subgraph.has_node(succ):
+                        subgraph.add_edge(node, succ, **self.graph.edges[node, succ])
+        
+        logging.info(f"Grafo particionado en {len(subgraphs)} subgrafos")
+        return subgraphs
+
+    def _extract_partition_key(self, node: str, partition_criteria: str) -> str:
+        """Extrae la clave de partición de un nodo según el criterio.
+        
+        Args:
+            node: Identificador del nodo
+            partition_criteria: Criterio de particionamiento
+            
+        Returns:
+            Clave de partición
+        """
+        if partition_criteria == "type":
+            # Particionar por tipo de nodo (artículo, concepto, pena)
+            return self.graph.nodes[node].get("type", "unknown")
+        
+        elif partition_criteria == "article_prefix":
+            # Particionar artículos por prefijo numérico (ej: artículos 100-199 juntos)
+            if node.startswith("articulo_"):
+                # Extraer número del artículo
+                import re
+                match = re.search(r'(\d+)', node)
+                if match:
+                    article_num = int(match.group(1))
+                    # Agrupar por centenar
+                    return f"art_{article_num // 100}xx"
+            
+            # Para nodos que no son artículos o no tienen número
+            return "other"
+        
+        elif partition_criteria == "chapter":
+            # Si tuviéramos metadatos de capítulo en los nodos
+            return self.graph.nodes[node].get("chapter", "unknown")
+        
+        # Criterio no reconocido, usar partición por defecto
+        return "default"

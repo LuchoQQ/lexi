@@ -1,0 +1,9 @@
+.env
+__pycache__
+cache
+chroma_db
+embedding_cache
+lib
+venv
+logs
+knowledge_graph.pkl

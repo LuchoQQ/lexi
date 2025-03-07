@@ -1,0 +1,180 @@
+{
+    "dolo": [
+      "intención criminal",
+      "mala fe",
+      "voluntad criminal",
+      "a sabiendas",
+      "intencionadamente"
+    ],
+    "culpa": [
+      "negligencia",
+      "imprudencia",
+      "impericia",
+      "descuido",
+      "falta de diligencia"
+    ],
+    "tentativa": [
+      "intento",
+      "conato",
+      "principio de ejecución",
+      "delito imperfecto"
+    ],
+    "legítima defensa": [
+      "defensa propia",
+      "defensa necesaria",
+      "justificante",
+      "eximente"
+    ],
+    "estado de necesidad": [
+      "necesidad justificante",
+      "necesidad exculpante",
+      "colisión de bienes jurídicos"
+    ],
+    "pena": [
+      "sanción",
+      "castigo",
+      "condena",
+      "punición"
+    ],
+    "prisión": [
+      "reclusión",
+      "encarcelamiento",
+      "privación de libertad",
+      "encierro"
+    ],
+    "multa": [
+      "sanción pecuniaria",
+      "pena económica",
+      "sanción monetaria"
+    ],
+    "inhabilitación": [
+      "prohibición",
+      "incapacitación",
+      "suspensión",
+      "privación de derechos"
+    ],
+    "reincidencia": [
+      "recaída en el delito",
+      "multirreincidencia",
+      "reiteración"
+    ],
+    "concurso de delitos": [
+      "concurso real",
+      "concurso ideal",
+      "concurso medial",
+      "pluralidad de delitos"
+    ],
+    "atenuante": [
+      "circunstancia atenuante",
+      "minorante",
+      "mitigante",
+      "moderador de pena"
+    ],
+    "agravante": [
+      "circunstancia agravante",
+      "calificante",
+      "incrementador de pena"
+    ],
+    "prescripción": [
+      "caducidad",
+      "extinción por tiempo",
+      "vencimiento del plazo"
+    ],
+    "imputabilidad": [
+      "capacidad de culpabilidad",
+      "responsabilidad penal",
+      "atribuibilidad"
+    ],
+    "inimputabilidad": [
+      "falta de capacidad",
+      "exención de responsabilidad",
+      "incapacidad de culpabilidad"
+    ],
+    "autor": [
+      "ejecutor",
+      "realizador",
+      "sujeto activo",
+      "perpetrador"
+    ],
+    "cómplice": [
+      "partícipe",
+      "colaborador",
+      "auxiliador",
+      "cooperador"
+    ],
+    "instigador": [
+      "inductor",
+      "determinador",
+      "provocador"
+    ],
+    "hurto": [
+      "sustracción",
+      "apoderamiento",
+      "apropiación"
+    ],
+    "robo": [
+      "hurto con violencia",
+      "apoderamiento con fuerza",
+      "despojo violento"
+    ],
+    "lesiones": [
+      "daño corporal",
+      "menoscabo físico",
+      "heridas"
+    ],
+    "homicidio": [
+      "matar",
+      "quitar la vida",
+      "causar la muerte"
+    ],
+    "fraude": [
+      "estafa",
+      "engaño",
+      "ardid",
+      "defraudación"
+    ],
+    "alevosía": [
+      "a traición",
+      "con ventaja",
+      "sin riesgo para el autor"
+    ],
+    "ensañamiento": [
+      "crueldad innecesaria",
+      "aumentar deliberadamente el sufrimiento"
+    ],
+    "premeditación": [
+      "plan previo",
+      "designio reflexivo",
+      "cálculo anticipado"
+    ],
+    "precio": [
+      "recompensa",
+      "promesa remuneratoria",
+      "contraprestación"
+    ],
+    "desistimiento": [
+      "abandono voluntario",
+      "renuncia",
+      "cesación voluntaria"
+    ],
+    "error de tipo": [
+      "falsa representación",
+      "desconocimiento de elementos objetivos",
+      "error sobre los hechos"
+    ],
+    "error de prohibición": [
+      "error sobre la antijuridicidad",
+      "desconocimiento de la ilicitud",
+      "error de derecho"
+    ],
+    "libertad condicional": [
+      "excarcelación anticipada",
+      "suspensión parcial de la pena",
+      "liberación condicional"
+    ],
+    "condena condicional": [
+      "suspensión de la ejecución",
+      "suspensión de la pena",
+      "pena en suspenso"
+    ]
+  }

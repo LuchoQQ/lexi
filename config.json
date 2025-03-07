@@ -1,0 +1,17 @@
+{
+    "embedding_model": "intfloat/multilingual-e5-large",
+    "rerank_model": "cross-encoder/ms-marco-MiniLM-L-6-v2",
+    "generation_model": "gpt-4-turbo",
+    "embedding_cache_dir": "./cache/embeddings",
+    "chroma_db_dir": "./src/data/chroma_db",
+    "graph_path": "./src/data/knowledge_graph.pkl",
+    "synonyms_path": "./legal_synonyms.json",
+    "collection_name": "codigo_penal_chunks",
+    "json_path": "./codigo_penal_argentino_metadata_chunks.json",
+    "batch_size": 100,
+    "retrieval_top_k": 10,
+    "use_hybrid_search": true,
+    "use_query_expansion": true,
+    "max_tokens": 1500,
+    "temperature": 0.2
+}
